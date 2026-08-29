@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="A local tracker that scores Summer 2027 ML, data science, and operations research internships against your resume.">
+    <title>Internship Matcher</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%AF%3C/text%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#jobs">Skip to job list</a>
+
+    <header class="appbar">
+      <div class="appbar-inner">
+        <div class="appbar-top">
+          <div class="brand">
+            <h1>Internship&nbsp;Matcher</h1>
+            <span class="tagline">Summer 2027</span>
+          </div>
+
+          <div class="appbar-right">
+            <input id="resume" name="resume" type="file" accept=".pdf,.docx,.txt,.md,.markdown" hidden>
+            <button type="button" id="uploadBtn" class="btn btn-quiet">Upload resume</button>
+            <button id="refresh" class="btn btn-quiet">Refresh</button>
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <input id="query" type="search" class="search" placeholder="Search company, role, city…" aria-label="Search jobs">
+          <select id="statusFilter" aria-label="Filter by status">
+            <option value="active">Active</option>
+            <option value="new">New</option>
+            <option value="applied">Applied</option>
+            <option value="all">All</option>
+          </select>
+          <select id="sortBy" aria-label="Sort jobs">
+            <option value="score">Best match</option>
+            <option value="date">Newest</option>
+            <option value="company">Company</option>
+          </select>
+          <button type="button" id="toggleHidden" class="btn btn-quiet" aria-pressed="false">Show hidden</button>
+        </div>
+        <p class="statusline"><span id="resumePanel">No resume</span><span id="fetchedNote"></span></p>
+      </div>
+    </header>
+
+    <main>
+      <section class="jobs" id="jobs" aria-live="polite"></section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <template id="jobTemplate">
+      <article class="job">
+        <div class="job-main">
+          <a class="title-link" target="_blank" rel="noreferrer"></a>
+          <p class="job-sub"></p>
+        </div>
+        <div class="job-actions">
+          <button type="button" class="btn btn-ghost" data-status="dismissed">Hide</button>
+          <button type="button" class="btn btn-ghost" data-status="applied">Applied</button>
+          <button type="button" class="btn btn-accent" data-action="analyze">Analyze</button>
+        </div>
+      </article>
+    </template>
+
+    <template id="skeletonTemplate">
+      <article class="job job-skeleton">
+        <div class="job-main">
+          <p class="skel skel-line" style="width:52%; height:15px"></p>
+          <p class="skel skel-line" style="width:34%"></p>
+        </div>
+      </article>
+    </template>
+
+    <div id="analysisModal" class="modal-overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <button type="button" class="modal-close" id="modalClose" aria-label="Close">&times;</button>
+        <div class="modal-body" id="modalBody"></div>
+      </div>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

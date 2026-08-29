@@ -1,0 +1,18 @@
+{
+  "name": "find-me-internship",
+  "version": "1.0.0",
+  "description": "Local internship tracker and resume matcher for 2027 ML/data science PhD internships.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.60.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.19.2",
+    "mammoth": "^1.8.0",
+    "multer": "^2.0.2",
+    "pdf-parse": "^1.1.1"
+  }
+}
