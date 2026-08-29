@@ -23,9 +23,11 @@
           </div>
 
           <div class="appbar-right">
-            <span class="resume-chip" id="resumeChip" hidden>
-              <span class="resume-name" id="resumeName"></span>
-              <button type="button" class="resume-remove" id="removeResume" aria-label="Remove resume" title="Remove resume">&times;</button>
+            <span class="resume-switcher">
+              <select id="resumeSelect" aria-label="Current resume">
+                <option value="">No resume (no analyze)</option>
+              </select>
+              <button type="button" class="resume-remove" id="removeResume" aria-label="Delete this resume" title="Delete this resume" hidden>&times;</button>
             </span>
             <input id="resume" name="resume" type="file" accept=".pdf,.docx,.txt,.md,.markdown" hidden>
             <button type="button" id="uploadBtn" class="btn btn-quiet">Upload resume</button>
@@ -42,10 +44,10 @@
             <option value="all">All</option>
           </select>
           <select id="sortBy" aria-label="Sort jobs">
-            <option value="score">Best match</option>
             <option value="date">Newest</option>
             <option value="company">Company</option>
           </select>
+          <button type="button" id="toggleFavorites" class="btn btn-quiet" aria-pressed="false">Show favorites</button>
           <button type="button" id="toggleHidden" class="btn btn-quiet" aria-pressed="false">Show hidden</button>
         </div>
       </div>
@@ -59,13 +61,14 @@
 
     <template id="jobTemplate">
       <article class="job">
+        <button type="button" class="star-btn" data-action="star" aria-pressed="false" aria-label="Star this job">★</button>
         <div class="job-main">
           <a class="title-link" target="_blank" rel="noreferrer"></a>
           <p class="job-sub"></p>
         </div>
         <div class="job-actions">
           <button type="button" class="btn btn-ghost" data-status="dismissed">Hide</button>
-          <button type="button" class="btn btn-ghost" data-status="applied">Applied</button>
+          <button type="button" class="btn btn-ghost" data-action="applied">Applied</button>
           <button type="button" class="btn btn-accent" data-action="analyze">Analyze</button>
         </div>
       </article>
