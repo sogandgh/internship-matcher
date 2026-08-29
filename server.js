@@ -16,7 +16,10 @@ const DATA_DIR = path.join(__dirname, 'data');
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
 const CACHE_FILE = path.join(DATA_DIR, 'jobs-cache.json');
 const STATUS_FILE = path.join(DATA_DIR, 'statuses.json');
-const RESUME_FILE = path.join(DATA_DIR, 'resume.json');
+const FAVORITES_FILE = path.join(DATA_DIR, 'favorites.json');
+const APPLICATIONS_FILE = path.join(DATA_DIR, 'applications.json');
+const RESUMES_FILE = path.join(DATA_DIR, 'resumes.json');
+const LEGACY_RESUME_FILE = path.join(DATA_DIR, 'resume.json'); // pre-multi-resume format, migrated on first read
 const ANALYSIS_FILE = path.join(DATA_DIR, 'analysis.json');
 const SIMPLIFY_FEED = 'https://raw.githubusercontent.com/SimplifyJobs/Summer2027-Internships/dev/.github/scripts/listings.json';
 
@@ -29,6 +32,7 @@ const anthropic = process.env.ANTHROPIC_API_KEY
   ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   : null;
 
+// Used only to decide which incoming feed postings are relevant enough to keep.
 const ROLE_KEYWORDS = [
   'machine learning',
   'ml',
@@ -50,40 +54,6 @@ const ROLE_KEYWORDS = [
   'reinforcement learning'
 ];
 
-const SKILL_KEYWORDS = [
-  'python',
-  'pytorch',
-  'tensorflow',
-  'jax',
-  'scikit',
-  'sklearn',
-  'sql',
-  'r',
-  'matlab',
-  'spark',
-  'aws',
-  'gcp',
-  'azure',
-  'kubernetes',
-  'docker',
-  'llm',
-  'transformer',
-  'bayesian',
-  'causal',
-  'forecasting',
-  'optimization',
-  'linear programming',
-  'integer programming',
-  'stochastic',
-  'simulation',
-  'operations research',
-  'deep learning',
-  'computer vision',
-  'nlp',
-  'reinforcement learning',
-  'statistics'
-];
-
 await fs.mkdir(DATA_DIR, { recursive: true });
 await fs.mkdir(UPLOAD_DIR, { recursive: true });
 
@@ -100,19 +70,23 @@ app.get('/api/health', (_req, res) => {
 
 app.get('/api/jobs', async (req, res) => {
   try {
-    const resume = await readJson(RESUME_FILE, null);
+    const resumeStore = await readResumes();
     const jobs = await getJobs(req.query.refresh === '1');
     const statuses = await readJson(STATUS_FILE, {});
+    const favorites = await readJson(FAVORITES_FILE, {});
+    const applications = await readJson(APPLICATIONS_FILE, {});
     const analyses = await readJson(ANALYSIS_FILE, {});
+    const currentAnalyses = resumeStore.currentId ? (analyses[resumeStore.currentId] || {}) : {};
     const response = jobs.map((job) => ({
       ...job,
       status: statuses[job.id] || 'new',
-      score: scoreJob(job, resume?.text || ''),
-      aiAnalysis: analyses[job.id] || null
+      starred: Boolean(favorites[job.id]),
+      application: applications[job.id] || null,
+      aiAnalysis: currentAnalyses[job.id] || null
     }));
     res.json({
       fetchedAt: new Date().toISOString(),
-      resumeLoaded: Boolean(resume?.text),
+      resumeLoaded: Boolean(resumeStore.currentId),
       jobs: response
     });
   } catch (error) {
@@ -120,50 +94,68 @@ app.get('/api/jobs', async (req, res) => {
   }
 });
 
-app.post('/api/resume', upload.single('resume'), async (req, res) => {
+app.get('/api/resumes', async (_req, res) => {
+  const store = await readResumes();
+  res.json(publicResumeStore(store));
+});
+
+app.post('/api/resumes', upload.single('resume'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Upload a PDF, DOCX, TXT, or Markdown resume.' });
     const text = await extractResumeText(req.file.path, req.file.originalname);
     if (!text.trim()) return res.status(400).json({ error: 'No readable text found in the uploaded resume.' });
 
+    const store = await readResumes();
+    const existingNames = new Set(store.resumes.map((item) => item.filename));
     const resume = {
-      filename: req.file.originalname,
+      id: crypto.randomUUID(),
+      filename: uniqueFilename(existingNames, req.file.originalname),
       uploadedAt: new Date().toISOString(),
       text,
       summary: summarizeResume(text)
     };
-    await writeJson(RESUME_FILE, resume);
-    await writeJson(ANALYSIS_FILE, {});
-    res.json({ filename: resume.filename, uploadedAt: resume.uploadedAt, summary: resume.summary });
+    store.resumes.push(resume);
+    store.currentId = resume.id; // newly uploaded resume becomes the current one
+    await writeJson(RESUMES_FILE, store);
+    res.json(publicResumeStore(store));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-app.get('/api/resume', async (_req, res) => {
-  const resume = await readJson(RESUME_FILE, null);
-  if (!resume) return res.json({ resumeLoaded: false });
-  res.json({
-    resumeLoaded: true,
-    filename: resume.filename,
-    uploadedAt: resume.uploadedAt,
-    summary: resume.summary
-  });
+app.post('/api/resumes/current', async (req, res) => {
+  const store = await readResumes();
+  const id = req.body.id || null;
+  if (id && !store.resumes.some((resume) => resume.id === id)) {
+    return res.status(400).json({ error: 'Unknown resume.' });
+  }
+  store.currentId = id;
+  await writeJson(RESUMES_FILE, store);
+  res.json(publicResumeStore(store));
 });
 
-app.delete('/api/resume', async (_req, res) => {
+app.delete('/api/resumes/:id', async (req, res) => {
   try {
-    await fs.rm(RESUME_FILE, { force: true });
-    // Past analyses were written against the removed resume, so drop them too.
-    await writeJson(ANALYSIS_FILE, {});
-    res.json({ resumeLoaded: false });
+    const store = await readResumes();
+    const before = store.resumes.length;
+    store.resumes = store.resumes.filter((resume) => resume.id !== req.params.id);
+    if (store.resumes.length === before) return res.status(404).json({ error: 'Resume not found.' });
+    if (store.currentId === req.params.id) store.currentId = null;
+    await writeJson(RESUMES_FILE, store);
+
+    // Analyses were written against this resume's text, so drop them too.
+    const analyses = await readJson(ANALYSIS_FILE, {});
+    delete analyses[req.params.id];
+    await writeJson(ANALYSIS_FILE, analyses);
+
+    res.json(publicResumeStore(store));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
 app.post('/api/jobs/:id/status', async (req, res) => {
-  const allowed = new Set(['new', 'saved', 'applied', 'dismissed']);
+  const allowed = new Set(['new', 'dismissed']);
   if (!allowed.has(req.body.status)) return res.status(400).json({ error: 'Invalid status.' });
   const statuses = await readJson(STATUS_FILE, {});
   statuses[req.params.id] = req.body.status;
@@ -171,11 +163,67 @@ app.post('/api/jobs/:id/status', async (req, res) => {
   res.json({ id: req.params.id, status: req.body.status });
 });
 
+app.post('/api/jobs/:id/apply', async (req, res) => {
+  try {
+    const store = await readResumes();
+    const resumeId = req.body.resumeId || null;
+    const resume = resumeId ? store.resumes.find((item) => item.id === resumeId) : null;
+    if (resumeId && !resume) return res.status(400).json({ error: 'Unknown resume.' });
+
+    const statuses = await readJson(STATUS_FILE, {});
+    statuses[req.params.id] = 'applied';
+    await writeJson(STATUS_FILE, statuses);
+
+    const applications = await readJson(APPLICATIONS_FILE, {});
+    const application = {
+      resumeId,
+      resumeFilename: resume?.filename || null,
+      notes: String(req.body.notes || '').slice(0, 2000),
+      appliedAt: new Date().toISOString()
+    };
+    applications[req.params.id] = application;
+    await writeJson(APPLICATIONS_FILE, applications);
+
+    res.json({ id: req.params.id, status: 'applied', application });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/jobs/:id/unapply', async (req, res) => {
+  try {
+    const statuses = await readJson(STATUS_FILE, {});
+    delete statuses[req.params.id];
+    await writeJson(STATUS_FILE, statuses);
+
+    const applications = await readJson(APPLICATIONS_FILE, {});
+    delete applications[req.params.id];
+    await writeJson(APPLICATIONS_FILE, applications);
+
+    res.json({ id: req.params.id, status: 'new' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/jobs/:id/favorite', async (req, res) => {
+  try {
+    const favorites = await readJson(FAVORITES_FILE, {});
+    if (req.body.starred) favorites[req.params.id] = true;
+    else delete favorites[req.params.id];
+    await writeJson(FAVORITES_FILE, favorites);
+    res.json({ id: req.params.id, starred: Boolean(req.body.starred) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/api/analyze', async (req, res) => {
   try {
     // Analysis is meaningless without a resume, so that check comes first.
-    const resume = await readJson(RESUME_FILE, null);
-    if (!resume?.text) return res.status(400).json({ error: 'Upload a resume to analyze this posting.' });
+    const store = await readResumes();
+    const resume = store.resumes.find((item) => item.id === store.currentId);
+    if (!resume) return res.status(400).json({ error: 'Pick a current resume to analyze this posting.' });
 
     if (!anthropic) {
       return res.status(400).json({ error: 'Set ANTHROPIC_API_KEY in .env to enable Claude resume matching.' });
@@ -186,13 +234,18 @@ app.post('/api/analyze', async (req, res) => {
     const selected = jobs.filter((job) => requestedIds.includes(job.id)).slice(0, 10);
     if (!selected.length) return res.status(400).json({ error: 'Select at least one visible job to analyze.' });
 
-    const existing = await readJson(ANALYSIS_FILE, {});
+    const analyses = await readJson(ANALYSIS_FILE, {});
+    const existing = analyses[resume.id] || {};
     const results = {};
     for (const job of selected) {
-      results[job.id] = await analyzeWithClaude(resume, job);
+      const analysis = await analyzeWithClaude(resume, job);
+      // Stamp the analysis with which resume produced it, so a redo or a resume
+      // switch never gets confused about what it's looking at.
+      results[job.id] = { ...analysis, resumeId: resume.id, resumeFilename: resume.filename, analyzedAt: new Date().toISOString() };
       existing[job.id] = results[job.id];
     }
-    await writeJson(ANALYSIS_FILE, existing);
+    analyses[resume.id] = existing;
+    await writeJson(ANALYSIS_FILE, analyses);
     res.json({ analyses: results });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -261,57 +314,11 @@ function hasKeyword(text, keyword) {
   return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, 'i').test(text);
 }
 
-function scoreJob(job, resumeText) {
-  const resume = resumeText.toLowerCase();
-  const jobText = [
-    job.category,
-    job.title,
-    job.company,
-    job.degrees.join(' '),
-    job.relevance.join(' ')
-  ].join(' ').toLowerCase();
-
-  const fieldHits = ROLE_KEYWORDS.filter((keyword) => hasKeyword(jobText, keyword));
-  const skillHits = SKILL_KEYWORDS.filter((keyword) => hasKeyword(resume, keyword) && hasKeyword(jobText, keyword));
-  const resumeSkillHits = SKILL_KEYWORDS.filter((keyword) => hasKeyword(resume, keyword));
-  const phdSignals = ['phd', 'ph.d', 'doctoral', 'research scientist', 'applied scientist', 'graduate'].filter((keyword) => hasKeyword(jobText, keyword));
-  const freshnessDays = job.dateUpdated ? (Date.now() - new Date(job.dateUpdated).getTime()) / 86400000 : 30;
-
-  const fieldScore = Math.min(30, fieldHits.length * 8 + (job.category === 'AI/ML/Data' ? 12 : 0));
-  const skillScore = resumeText ? Math.min(30, skillHits.length * 6 + Math.min(8, resumeSkillHits.length)) : 8;
-  const phdScore = Math.min(20, phdSignals.length * 8 + (job.degrees.some((degree) => /master|phd|doctor/i.test(degree)) ? 8 : 0));
-  const logisticsScore = Math.min(10, job.sponsorship !== 'No' ? 5 : 0) + Math.min(5, job.locations.length ? 5 : 0);
-  const freshnessScore = Math.max(0, Math.min(10, 10 - freshnessDays / 4));
-  const total = Math.round(fieldScore + skillScore + phdScore + logisticsScore + freshnessScore);
-
-  const suggestions = [];
-  if (!resumeText) suggestions.push('Upload a resume to unlock personalized scoring.');
-  if (fieldHits.length) suggestions.push(`Emphasize matching area: ${fieldHits.slice(0, 3).join(', ')}.`);
-  if (skillHits.length) suggestions.push(`Mirror these resume skills in the application: ${skillHits.slice(0, 5).join(', ')}.`);
-  if (!phdSignals.length && !job.degrees.some((degree) => /master|phd|doctor/i.test(degree))) {
-    suggestions.push('Check eligibility carefully; this posting may be undergraduate-oriented.');
-  }
-  if (job.sponsorship === 'No') suggestions.push('Verify work authorization before spending time on this application.');
-
-  return {
-    total,
-    criteria: {
-      fieldFit: Math.round(fieldScore),
-      resumeSkillFit: Math.round(skillScore),
-      phdResearchFit: Math.round(phdScore),
-      logistics: Math.round(logisticsScore),
-      freshness: Math.round(freshnessScore)
-    },
-    matchedKeywords: [...new Set([...fieldHits, ...skillHits])].slice(0, 12),
-    suggestions
-  };
-}
-
 async function analyzeWithClaude(resume, job) {
   const prompt = {
     resume: resume.text.slice(0, 20000),
     job,
-    scoringRubric: {
+    reviewFocus: {
       fieldFit: 'Machine learning, data science, deep learning, operations research alignment.',
       researchFit: 'PhD/research depth, publications, methods, modeling, experimentation.',
       technicalFit: 'Specific tools, programming languages, math, ML systems, optimization.',
@@ -321,14 +328,20 @@ async function analyzeWithClaude(resume, job) {
   };
   const message = await anthropic.messages.create({
     model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514',
-    max_tokens: 1400,
-    temperature: 0.2,
+    // Sonnet 5+ think by default and thinking tokens count against max_tokens too,
+    // so this needs real headroom beyond just the visible JSON. "medium" effort keeps
+    // reasoning proportionate to a straightforward review instead of over-thinking it.
+    max_tokens: 8192,
+    output_config: { effort: 'medium' },
     system: 'You are a rigorous PhD internship application reviewer. This is the one detailed review the candidate will read for this posting, so ground every point in specifics from their actual resume rather than generic advice. Return strict JSON only.',
     messages: [{
       role: 'user',
-      content: `Score this candidate for the internship using their full resume text below. Cite concrete resume details (projects, tools, coursework, publications) in your reasoning wherever possible. Return JSON with keys: score number 0-100, verdict string, strengths string[], gaps string[], resume_edits string[], application_angle string.\n\n${JSON.stringify(prompt)}`
+      content: `Review this candidate for the internship using their full resume text below. Cite concrete resume details (projects, tools, coursework, publications) in your reasoning wherever possible. Return JSON with keys: verdict string, strengths string[], gaps string[], resume_edits string[], application_angle string.\n\n${JSON.stringify(prompt)}`
     }]
   });
+  if (message.stop_reason === 'max_tokens') {
+    throw new Error('Claude response was truncated (hit max_tokens) before the JSON finished.');
+  }
   const text = message.content.find((block) => block.type === 'text')?.text || '{}';
   return parseClaudeJson(text);
 }
@@ -352,14 +365,54 @@ async function extractResumeText(filePath, filename) {
   throw new Error('Unsupported resume format. Use PDF, DOCX, TXT, or Markdown.');
 }
 
+function uniqueFilename(existingNames, filename) {
+  if (!existingNames.has(filename)) return filename;
+  const ext = path.extname(filename);
+  const base = filename.slice(0, filename.length - ext.length);
+  let n = 1;
+  let candidate = `${base} (${n})${ext}`;
+  while (existingNames.has(candidate)) {
+    n += 1;
+    candidate = `${base} (${n})${ext}`;
+  }
+  return candidate;
+}
+
 function summarizeResume(text) {
-  const lower = text.toLowerCase();
-  const skills = SKILL_KEYWORDS.filter((keyword) => hasKeyword(lower, keyword)).slice(0, 16);
-  const fields = ROLE_KEYWORDS.filter((keyword) => hasKeyword(lower, keyword)).slice(0, 10);
   return {
-    wordCount: text.trim().split(/\s+/).filter(Boolean).length,
-    detectedSkills: skills,
-    detectedFields: fields
+    wordCount: text.trim().split(/\s+/).filter(Boolean).length
+  };
+}
+
+async function readResumes() {
+  let store = await readJson(RESUMES_FILE, null);
+  if (store) return store;
+
+  // First run after the multi-resume upgrade: fold the old single-resume file in, if present.
+  const legacy = await readJson(LEGACY_RESUME_FILE, null);
+  if (legacy?.text) {
+    const id = crypto.randomUUID();
+    store = {
+      currentId: id,
+      resumes: [{
+        id,
+        filename: legacy.filename,
+        uploadedAt: legacy.uploadedAt,
+        text: legacy.text,
+        summary: legacy.summary || summarizeResume(legacy.text)
+      }]
+    };
+  } else {
+    store = { currentId: null, resumes: [] };
+  }
+  await writeJson(RESUMES_FILE, store);
+  return store;
+}
+
+function publicResumeStore(store) {
+  return {
+    currentId: store.currentId,
+    resumes: store.resumes.map(({ id, filename, uploadedAt, summary }) => ({ id, filename, uploadedAt, summary }))
   };
 }
 

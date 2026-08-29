@@ -1,16 +1,18 @@
 const state = {
   jobs: [],
+  resumes: [],
+  currentResumeId: null,
   resumeLoaded: false,
   query: '',
   statusFilter: 'active',
-  sortBy: 'score',
+  sortBy: 'date',
   showHidden: false,
+  showFavoritesOnly: false,
   fetchedAt: null
 };
 
 const jobsEl = document.querySelector('#jobs');
-const resumeChip = document.querySelector('#resumeChip');
-const resumeName = document.querySelector('#resumeName');
+const resumeSelect = document.querySelector('#resumeSelect');
 const removeResumeBtn = document.querySelector('#removeResume');
 const fetchedNote = document.querySelector('#fetchedNote');
 const uploadBtn = document.querySelector('#uploadBtn');
@@ -18,6 +20,7 @@ const template = document.querySelector('#jobTemplate');
 const skeletonTemplate = document.querySelector('#skeletonTemplate');
 const fileInput = document.querySelector('#resume');
 const toggleHidden = document.querySelector('#toggleHidden');
+const toggleFavorites = document.querySelector('#toggleFavorites');
 const refreshButton = document.querySelector('#refresh');
 const modalOverlay = document.querySelector('#analysisModal');
 const modalBody = document.querySelector('#modalBody');
@@ -44,11 +47,18 @@ toggleHidden.addEventListener('click', () => {
   toggleHidden.setAttribute('aria-pressed', String(state.showHidden));
   render();
 });
+toggleFavorites.addEventListener('click', () => {
+  state.showFavoritesOnly = !state.showFavoritesOnly;
+  toggleFavorites.classList.toggle('is-on', state.showFavoritesOnly);
+  toggleFavorites.setAttribute('aria-pressed', String(state.showFavoritesOnly));
+  render();
+});
 // One control: the button opens the picker, and choosing a file uploads it.
 uploadBtn.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => {
   if (fileInput.files[0]) uploadResume();
 });
+resumeSelect.addEventListener('change', () => selectResume(resumeSelect.value || null));
 removeResumeBtn.addEventListener('click', removeResume);
 
 modalClose.addEventListener('click', closeModal);
@@ -60,7 +70,7 @@ document.addEventListener('keydown', (event) => {
 });
 
 renderSkeletons();
-loadResume();
+loadResumes();
 loadJobs(false);
 
 async function loadJobs(refresh) {
@@ -89,14 +99,13 @@ async function loadJobs(refresh) {
   }
 }
 
-async function loadResume() {
+async function loadResumes() {
   try {
-    const response = await fetch('/api/resume');
+    const response = await fetch('/api/resumes');
     const data = await response.json();
-    if (!data.resumeLoaded) return;
-    renderResume(data);
+    renderResumeStore(data);
   } catch {
-    // Resume line just stays in its default "No resume" state.
+    // Resume switcher just stays in its default "No resume" state.
   }
 }
 
@@ -108,12 +117,12 @@ async function uploadResume() {
   uploadBtn.disabled = true;
   uploadBtn.textContent = 'Uploading…';
   try {
-    const response = await fetch('/api/resume', { method: 'POST', body });
+    const response = await fetch('/api/resumes', { method: 'POST', body });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Resume upload failed.');
-    renderResume({ resumeLoaded: true, ...data });
+    renderResumeStore(data);
     await loadJobs(false);
-    toast('Resume uploaded — scores updated.');
+    toast('Resume uploaded and set as current.');
   } catch (error) {
     toast(error.message, 'error');
   } finally {
@@ -124,16 +133,35 @@ async function uploadResume() {
   }
 }
 
+async function selectResume(id) {
+  const previousId = state.currentResumeId;
+  state.currentResumeId = id;
+  try {
+    const response = await fetch('/api/resumes/current', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not switch resumes.');
+    renderResumeStore(data);
+    await loadJobs(false);
+  } catch (error) {
+    state.currentResumeId = previousId;
+    resumeSelect.value = previousId || '';
+    toast(error.message, 'error');
+  }
+}
+
 async function removeResume() {
+  const id = state.currentResumeId;
+  if (!id) return;
   removeResumeBtn.disabled = true;
   try {
-    const response = await fetch('/api/resume', { method: 'DELETE' });
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      throw new Error(data.error || 'Could not remove the resume.');
-    }
-    for (const job of state.jobs) job.aiAnalysis = null;
-    renderResume({ resumeLoaded: false });
+    const response = await fetch(`/api/resumes/${id}`, { method: 'DELETE' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Could not remove the resume.');
+    renderResumeStore(data);
     await loadJobs(false);
     toast('Resume removed.');
   } catch (error) {
@@ -141,6 +169,16 @@ async function removeResume() {
   } finally {
     removeResumeBtn.disabled = false;
   }
+}
+
+function renderResumeStore(data) {
+  state.resumes = data.resumes || [];
+  state.currentResumeId = data.currentId || null;
+  resumeSelect.innerHTML = '<option value="">No resume (no analyze)</option>' + state.resumes.map((resume) => (
+    `<option value="${escapeHtml(resume.id)}">${escapeHtml(resume.filename)}</option>`
+  )).join('');
+  resumeSelect.value = state.currentResumeId || '';
+  removeResumeBtn.hidden = !state.currentResumeId;
 }
 
 async function setStatus(id, status) {
@@ -168,16 +206,77 @@ async function setStatus(id, status) {
   }
 }
 
-// Claude is only ever called here, in direct response to an Analyze click.
+async function toggleStar(id) {
+  const job = state.jobs.find((item) => item.id === id);
+  if (!job) return;
+  const nextStarred = !job.starred;
+  job.starred = nextStarred;
+  render();
+  try {
+    const response = await fetch(`/api/jobs/${id}/favorite`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ starred: nextStarred })
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || 'Could not update favorite.');
+    }
+  } catch (error) {
+    job.starred = !nextStarred;
+    render();
+    toast(error.message, 'error');
+  }
+}
+
+async function submitApply(job, resumeId, notes, triggerButton) {
+  try {
+    const response = await fetch(`/api/jobs/${job.id}/apply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ resumeId, notes })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not mark this posting as applied.');
+    job.status = 'applied';
+    job.application = data.application;
+    closeModal();
+    render();
+    toast('Marked as applied.');
+  } catch (error) {
+    toast(error.message, 'error');
+  }
+}
+
+async function undoApply(job) {
+  try {
+    const response = await fetch(`/api/jobs/${job.id}/unapply`, { method: 'POST' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Could not undo applied status.');
+    job.status = 'new';
+    job.application = null;
+    closeModal();
+    render();
+    toast('Applied status undone.');
+  } catch (error) {
+    toast(error.message, 'error');
+  }
+}
+
+// Claude is only ever called here, in direct response to an Analyze/Redo click.
 async function analyzeJob(job, triggerButton) {
   lastFocused = triggerButton;
   if (job.aiAnalysis) {
-    openModal(jobModalContent(job));
+    showAnalysisModal(job);
     return;
   }
-  // No resume, no analysis — fail here rather than round-tripping to the server.
-  if (!state.resumeLoaded) {
-    openModal(errorModalContent(job, 'Upload a resume to analyze this posting.'));
+  await runAnalysis(job);
+}
+
+async function runAnalysis(job) {
+  // No current resume, no analysis — fail here rather than round-tripping to the server.
+  if (!state.currentResumeId) {
+    openModal(errorModalContent(job, 'Pick a current resume to analyze this posting.'));
     return;
   }
   openModal(loadingModalContent(job));
@@ -190,22 +289,16 @@ async function analyzeJob(job, triggerButton) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Claude analysis failed.');
     job.aiAnalysis = data.analyses[job.id];
-    openModal(jobModalContent(job));
+    showAnalysisModal(job);
     render();
   } catch (error) {
     openModal(errorModalContent(job, error.message));
   }
 }
 
-function renderResume(data) {
-  if (!data.resumeLoaded) {
-    resumeChip.hidden = true;
-    resumeName.textContent = '';
-    return;
-  }
-  resumeName.textContent = data.filename;
-  resumeName.title = `${data.filename} · uploaded ${relativeDate(data.uploadedAt)}`;
-  resumeChip.hidden = false;
+function showAnalysisModal(job) {
+  openModal(jobModalContent(job));
+  modalBody.querySelector('#redoAnalysis').addEventListener('click', () => runAnalysis(job));
 }
 
 function visibleJobs() {
@@ -216,7 +309,8 @@ function visibleJobs() {
       || job.status === state.statusFilter;
     // Hidden jobs are excluded unless the "Show hidden" toggle is on.
     const hiddenMatch = job.status !== 'dismissed' || state.showHidden;
-    return statusMatch && hiddenMatch && text.includes(state.query);
+    const favoriteMatch = !state.showFavoritesOnly || Boolean(job.starred);
+    return statusMatch && hiddenMatch && favoriteMatch && text.includes(state.query);
   });
 }
 
@@ -224,10 +318,8 @@ function sortJobs(jobs, sortBy) {
   const sorted = [...jobs];
   if (sortBy === 'company') {
     sorted.sort((a, b) => a.company.localeCompare(b.company));
-  } else if (sortBy === 'date') {
-    sorted.sort((a, b) => new Date(b.dateUpdated || 0) - new Date(a.dateUpdated || 0));
   } else {
-    sorted.sort((a, b) => b.score.total - a.score.total);
+    sorted.sort((a, b) => new Date(b.dateUpdated || 0) - new Date(a.dateUpdated || 0));
   }
   return sorted;
 }
@@ -255,6 +347,11 @@ function renderJob(job) {
   const node = template.content.firstElementChild.cloneNode(true);
   node.dataset.status = job.status;
 
+  const starButton = node.querySelector('[data-action="star"]');
+  starButton.classList.toggle('is-starred', Boolean(job.starred));
+  starButton.setAttribute('aria-pressed', String(Boolean(job.starred)));
+  starButton.addEventListener('click', () => toggleStar(job.id));
+
   const titleLink = node.querySelector('.title-link');
   titleLink.textContent = job.title;
   titleLink.href = job.url;
@@ -266,13 +363,18 @@ function renderJob(job) {
     job.dateUpdated ? escapeHtml(relativeDate(job.dateUpdated)) : ''
   ].filter(Boolean).join(' · ');
 
-  node.querySelectorAll('button[data-status]').forEach((button) => {
-    button.classList.toggle('is-active', job.status === button.dataset.status);
-    // A hidden job's Hide button becomes the way to put it back.
-    if (button.dataset.status === 'dismissed') {
-      button.textContent = job.status === 'dismissed' ? 'Unhide' : 'Hide';
-    }
-    button.addEventListener('click', () => setStatus(job.id, button.dataset.status));
+  const dismissButton = node.querySelector('[data-status="dismissed"]');
+  dismissButton.classList.toggle('is-active', job.status === 'dismissed');
+  // A hidden job's Hide button becomes the way to put it back.
+  dismissButton.textContent = job.status === 'dismissed' ? 'Unhide' : 'Hide';
+  dismissButton.addEventListener('click', () => setStatus(job.id, 'dismissed'));
+
+  const appliedButton = node.querySelector('[data-action="applied"]');
+  appliedButton.classList.toggle('is-active', job.status === 'applied');
+  appliedButton.textContent = job.status === 'applied' ? 'Applied ✓' : 'Applied';
+  appliedButton.addEventListener('click', () => {
+    if (job.status === 'applied') openAppliedInfo(job, appliedButton);
+    else openApplyPrompt(job, appliedButton);
   });
 
   const analyzeButton = node.querySelector('[data-action="analyze"]');
@@ -282,27 +384,15 @@ function renderJob(job) {
   return node;
 }
 
-function scoreTier(total) {
-  if (total >= 70) return { key: 'strong', label: 'Strong match' };
-  if (total >= 45) return { key: 'mid', label: 'Fair match' };
-  return { key: 'weak', label: 'Weak match' };
-}
-
 function listBlock(title, items) {
   if (!items?.length) return '';
   return `<section><strong>${escapeHtml(title)}</strong><ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section>`;
 }
 
-// Header shared by every modal state, carrying the local relevance score —
-// the only place it is surfaced.
 function modalHeader(job) {
-  const tier = scoreTier(job.score.total);
   return `
     <h4 id="modalTitle">${escapeHtml(job.title)}</h4>
     <p class="modal-company">${escapeHtml(job.company)}</p>
-    <p class="modal-relevance" data-tier="${tier.key}">
-      Relevance <b>${job.score.total}</b><span>/100</span> · ${escapeHtml(tier.label)}
-    </p>
   `;
 }
 
@@ -310,11 +400,15 @@ function jobModalContent(job) {
   const analysis = job.aiAnalysis;
   return `
     ${modalHeader(job)}
-    <div class="modal-verdict"><strong>${Number(analysis.score || 0)}</strong> ${escapeHtml(analysis.verdict || 'Reviewed')}</div>
+    <p class="modal-analyzed-with">Analyzed with <b>${escapeHtml(analysis.resumeFilename || 'an unknown resume')}</b>${analysis.analyzedAt ? ` · ${escapeHtml(relativeDate(analysis.analyzedAt))}` : ''}</p>
+    <div class="modal-verdict">${escapeHtml(analysis.verdict || 'Reviewed')}</div>
     ${listBlock('Strengths', analysis.strengths || [])}
     ${listBlock('Gaps', analysis.gaps || [])}
     ${listBlock('Resume edits', analysis.resume_edits || [])}
     ${analysis.application_angle ? `<section><strong>Application angle</strong><p>${escapeHtml(analysis.application_angle)}</p></section>` : ''}
+    <div class="modal-form-actions">
+      <button type="button" class="btn btn-ghost" id="redoAnalysis">Redo analysis</button>
+    </div>
   `;
 }
 
@@ -333,6 +427,58 @@ function errorModalContent(job, message) {
     ${modalHeader(job)}
     <p>${escapeHtml(message)}</p>
   `;
+}
+
+function openApplyPrompt(job, triggerButton) {
+  lastFocused = triggerButton;
+  const resumeOptions = state.resumes.map((resume) => (
+    `<option value="${escapeHtml(resume.id)}">${escapeHtml(resume.filename)}</option>`
+  )).join('');
+  openModal(`
+    ${modalHeader(job)}
+    <form id="applyForm" class="apply-form">
+      <label class="field">
+        <span>Resume version used</span>
+        <select id="applyResume">
+          <option value="">None selected</option>
+          ${resumeOptions}
+        </select>
+      </label>
+      <label class="field">
+        <span>Notes</span>
+        <textarea id="applyNotes" rows="4" placeholder="Referral, cover letter angle, portal used…"></textarea>
+      </label>
+      <div class="modal-form-actions">
+        <button type="button" class="btn btn-quiet" id="applyCancel">Cancel</button>
+        <button type="submit" class="btn btn-accent">Mark applied</button>
+      </div>
+    </form>
+  `);
+  const resumeField = modalBody.querySelector('#applyResume');
+  if (state.currentResumeId) resumeField.value = state.currentResumeId;
+  modalBody.querySelector('#applyCancel').addEventListener('click', closeModal);
+  modalBody.querySelector('#applyForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const notes = modalBody.querySelector('#applyNotes').value.trim();
+    submitApply(job, resumeField.value || null, notes);
+  });
+}
+
+function openAppliedInfo(job, triggerButton) {
+  lastFocused = triggerButton;
+  const application = job.application;
+  openModal(`
+    ${modalHeader(job)}
+    <section>
+      <strong>Applied</strong>
+      <p>${application?.appliedAt ? escapeHtml(relativeDate(application.appliedAt)) : 'Unknown date'} · resume used: ${escapeHtml(application?.resumeFilename || 'None selected')}</p>
+    </section>
+    ${application?.notes ? `<section><strong>Notes</strong><p>${escapeHtml(application.notes)}</p></section>` : ''}
+    <div class="modal-form-actions">
+      <button type="button" class="btn btn-ghost" id="undoApply">Undo applied</button>
+    </div>
+  `);
+  modalBody.querySelector('#undoApply').addEventListener('click', () => undoApply(job));
 }
 
 function openModal(html) {

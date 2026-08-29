@@ -172,55 +172,48 @@ input::placeholder {
   margin-left: auto;
 }
 
+#toggleFavorites.is-on,
 #toggleHidden.is-on {
   background: var(--accent-dim);
   border-color: var(--accent-line);
   color: var(--accent);
 }
 
-.resume-chip {
+.resume-switcher {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  height: 32px;
-  max-width: 230px;
-  padding: 0 5px 0 13px;
-  border: 1px solid var(--accent-line);
+  gap: 2px;
+}
+
+.resume-switcher select {
+  max-width: 190px;
   border-radius: 999px;
-  background: var(--accent-dim);
-  color: var(--accent);
-  font-size: 12.5px;
-  font-weight: 500;
-}
-
-.resume-chip[hidden] {
-  display: none;
-}
-
-.resume-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  padding-left: 13px;
 }
 
 .resume-remove {
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  height: 20px;
-  width: 20px;
+  height: 24px;
+  width: 24px;
   padding: 0;
   border: 0;
   border-radius: 50%;
   background: transparent;
-  color: var(--accent);
-  font-size: 15px;
+  color: var(--muted);
+  font-size: 16px;
   line-height: 1;
   cursor: pointer;
 }
 
+.resume-remove[hidden] {
+  display: none;
+}
+
 .resume-remove:hover {
-  background: rgba(168, 114, 26, 0.16);
+  background: var(--surface-2);
+  color: var(--danger);
 }
 
 /* ---------- Buttons ---------- */
@@ -321,9 +314,9 @@ main {
 
 .job {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 18px;
+  gap: 14px;
   padding: 14px 18px;
   border: 1px solid var(--line-soft);
   border-radius: var(--r-lg);
@@ -334,6 +327,34 @@ main {
 .job:hover {
   background: var(--surface-2);
   border-color: var(--line);
+}
+
+.star-btn {
+  display: grid;
+  place-items: center;
+  height: 30px;
+  width: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--line);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 140ms ease, transform 90ms ease;
+}
+
+.star-btn:hover {
+  color: var(--accent-line);
+}
+
+.star-btn:active {
+  transform: scale(0.9);
+}
+
+.star-btn.is-starred {
+  color: var(--accent-fill);
 }
 
 .title-link {
@@ -528,58 +549,27 @@ main {
   margin-bottom: 14px;
 }
 
-.modal-relevance {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
-  margin-bottom: 18px;
-  padding: 5px 11px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
+.modal-analyzed-with {
+  margin-bottom: 14px;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 500;
 }
 
-.modal-relevance b {
-  font-family: var(--mono);
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--ink);
-}
-
-.modal-relevance span {
-  font-family: var(--mono);
-  font-size: 11px;
-}
-
-.modal-relevance[data-tier="strong"] {
-  border-color: var(--accent-line);
-  background: var(--accent-dim);
-}
-
-.modal-relevance[data-tier="strong"] b {
-  color: var(--accent);
+.modal-analyzed-with b {
+  color: var(--ink-dim);
+  font-weight: 600;
 }
 
 .modal-verdict {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
   margin-bottom: 20px;
   padding: 12px 14px;
   background: var(--accent-dim);
   border: 1px solid var(--accent-line);
   border-radius: var(--r-md);
-  font-size: 13px;
+  font-size: 13.5px;
+  line-height: 1.5;
   color: var(--ink-dim);
-}
-
-.modal-verdict strong {
-  font-family: var(--mono);
-  font-size: 17px;
-  font-weight: 700;
-  color: var(--accent);
+  font-weight: 500;
 }
 
 .modal-body section {
@@ -617,6 +607,41 @@ main {
   font-size: 13.5px;
   line-height: 1.6;
   color: var(--ink-dim);
+}
+
+.apply-form {
+  display: grid;
+  gap: 14px;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-dim);
+}
+
+.field select,
+.field textarea {
+  width: 100%;
+  height: auto;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--ink);
+  resize: vertical;
+}
+
+.modal-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
 }
 
 .modal-loading {
@@ -671,8 +696,12 @@ main {
   }
 
   .job {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: auto minmax(0, 1fr);
     gap: 10px;
+  }
+
+  .job-actions {
+    grid-column: 1 / -1;
   }
 
   #toggleHidden {
