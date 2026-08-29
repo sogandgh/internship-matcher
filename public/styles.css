@@ -549,6 +549,17 @@ main {
   margin-bottom: 14px;
 }
 
+.modal-analyzed-with {
+  margin-bottom: 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.modal-analyzed-with b {
+  color: var(--ink-dim);
+  font-weight: 600;
+}
+
 .modal-verdict {
   margin-bottom: 20px;
   padding: 12px 14px;

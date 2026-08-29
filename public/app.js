@@ -263,13 +263,17 @@ async function undoApply(job) {
   }
 }
 
-// Claude is only ever called here, in direct response to an Analyze click.
+// Claude is only ever called here, in direct response to an Analyze/Redo click.
 async function analyzeJob(job, triggerButton) {
   lastFocused = triggerButton;
   if (job.aiAnalysis) {
-    openModal(jobModalContent(job));
+    showAnalysisModal(job);
     return;
   }
+  await runAnalysis(job);
+}
+
+async function runAnalysis(job) {
   // No current resume, no analysis — fail here rather than round-tripping to the server.
   if (!state.currentResumeId) {
     openModal(errorModalContent(job, 'Pick a current resume to analyze this posting.'));
@@ -285,11 +289,16 @@ async function analyzeJob(job, triggerButton) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Claude analysis failed.');
     job.aiAnalysis = data.analyses[job.id];
-    openModal(jobModalContent(job));
+    showAnalysisModal(job);
     render();
   } catch (error) {
     openModal(errorModalContent(job, error.message));
   }
+}
+
+function showAnalysisModal(job) {
+  openModal(jobModalContent(job));
+  modalBody.querySelector('#redoAnalysis').addEventListener('click', () => runAnalysis(job));
 }
 
 function visibleJobs() {
@@ -391,11 +400,15 @@ function jobModalContent(job) {
   const analysis = job.aiAnalysis;
   return `
     ${modalHeader(job)}
+    <p class="modal-analyzed-with">Analyzed with <b>${escapeHtml(analysis.resumeFilename || 'an unknown resume')}</b>${analysis.analyzedAt ? ` · ${escapeHtml(relativeDate(analysis.analyzedAt))}` : ''}</p>
     <div class="modal-verdict">${escapeHtml(analysis.verdict || 'Reviewed')}</div>
     ${listBlock('Strengths', analysis.strengths || [])}
     ${listBlock('Gaps', analysis.gaps || [])}
     ${listBlock('Resume edits', analysis.resume_edits || [])}
     ${analysis.application_angle ? `<section><strong>Application angle</strong><p>${escapeHtml(analysis.application_angle)}</p></section>` : ''}
+    <div class="modal-form-actions">
+      <button type="button" class="btn btn-ghost" id="redoAnalysis">Redo analysis</button>
+    </div>
   `;
 }
 

@@ -105,14 +105,15 @@ app.post('/api/resumes', upload.single('resume'), async (req, res) => {
     const text = await extractResumeText(req.file.path, req.file.originalname);
     if (!text.trim()) return res.status(400).json({ error: 'No readable text found in the uploaded resume.' });
 
+    const store = await readResumes();
+    const existingNames = new Set(store.resumes.map((item) => item.filename));
     const resume = {
       id: crypto.randomUUID(),
-      filename: req.file.originalname,
+      filename: uniqueFilename(existingNames, req.file.originalname),
       uploadedAt: new Date().toISOString(),
       text,
       summary: summarizeResume(text)
     };
-    const store = await readResumes();
     store.resumes.push(resume);
     store.currentId = resume.id; // newly uploaded resume becomes the current one
     await writeJson(RESUMES_FILE, store);
@@ -237,7 +238,10 @@ app.post('/api/analyze', async (req, res) => {
     const existing = analyses[resume.id] || {};
     const results = {};
     for (const job of selected) {
-      results[job.id] = await analyzeWithClaude(resume, job);
+      const analysis = await analyzeWithClaude(resume, job);
+      // Stamp the analysis with which resume produced it, so a redo or a resume
+      // switch never gets confused about what it's looking at.
+      results[job.id] = { ...analysis, resumeId: resume.id, resumeFilename: resume.filename, analyzedAt: new Date().toISOString() };
       existing[job.id] = results[job.id];
     }
     analyses[resume.id] = existing;
@@ -324,7 +328,11 @@ async function analyzeWithClaude(resume, job) {
   };
   const message = await anthropic.messages.create({
     model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514',
-    max_tokens: 2048,
+    // Sonnet 5+ think by default and thinking tokens count against max_tokens too,
+    // so this needs real headroom beyond just the visible JSON. "medium" effort keeps
+    // reasoning proportionate to a straightforward review instead of over-thinking it.
+    max_tokens: 8192,
+    output_config: { effort: 'medium' },
     system: 'You are a rigorous PhD internship application reviewer. This is the one detailed review the candidate will read for this posting, so ground every point in specifics from their actual resume rather than generic advice. Return strict JSON only.',
     messages: [{
       role: 'user',
@@ -355,6 +363,19 @@ async function extractResumeText(filePath, filename) {
   if (ext === '.docx') return (await mammoth.extractRawText({ buffer })).value;
   if (['.txt', '.md', '.markdown'].includes(ext)) return buffer.toString('utf8');
   throw new Error('Unsupported resume format. Use PDF, DOCX, TXT, or Markdown.');
+}
+
+function uniqueFilename(existingNames, filename) {
+  if (!existingNames.has(filename)) return filename;
+  const ext = path.extname(filename);
+  const base = filename.slice(0, filename.length - ext.length);
+  let n = 1;
+  let candidate = `${base} (${n})${ext}`;
+  while (existingNames.has(candidate)) {
+    n += 1;
+    candidate = `${base} (${n})${ext}`;
+  }
+  return candidate;
 }
 
 function summarizeResume(text) {
