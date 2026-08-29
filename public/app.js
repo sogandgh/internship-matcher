@@ -5,6 +5,7 @@ const state = {
   resumeLoaded: false,
   query: '',
   statusFilter: 'active',
+  locationFilter: '',
   sortBy: 'date',
   showHidden: false,
   showFavoritesOnly: false,
@@ -13,6 +14,7 @@ const state = {
 
 const jobsEl = document.querySelector('#jobs');
 const resumeSelect = document.querySelector('#resumeSelect');
+const locationFilter = document.querySelector('#locationFilter');
 const removeResumeBtn = document.querySelector('#removeResume');
 const fetchedNote = document.querySelector('#fetchedNote');
 const uploadBtn = document.querySelector('#uploadBtn');
@@ -35,6 +37,10 @@ document.querySelector('#query').addEventListener('input', debounce((event) => {
 }, 150));
 document.querySelector('#statusFilter').addEventListener('change', (event) => {
   state.statusFilter = event.target.value;
+  render();
+});
+locationFilter.addEventListener('change', (event) => {
+  state.locationFilter = event.target.value;
   render();
 });
 document.querySelector('#sortBy').addEventListener('change', (event) => {
@@ -310,7 +316,8 @@ function visibleJobs() {
     // Hidden jobs are excluded unless the "Show hidden" toggle is on.
     const hiddenMatch = job.status !== 'dismissed' || state.showHidden;
     const favoriteMatch = !state.showFavoritesOnly || Boolean(job.starred);
-    return statusMatch && hiddenMatch && favoriteMatch && text.includes(state.query);
+    const locationMatch = !state.locationFilter || job.locations.includes(state.locationFilter);
+    return statusMatch && hiddenMatch && favoriteMatch && locationMatch && text.includes(state.query);
   });
 }
 
@@ -324,7 +331,23 @@ function sortJobs(jobs, sortBy) {
   return sorted;
 }
 
+function renderLocationOptions() {
+  const locations = [...new Set(
+    state.jobs.flatMap((job) => job.locations).map((loc) => String(loc).trim()).filter(Boolean)
+  )].sort((a, b) => a.localeCompare(b));
+
+  // A refresh can drop the location the user had picked; fall back to "all".
+  if (state.locationFilter && !locations.includes(state.locationFilter)) {
+    state.locationFilter = '';
+  }
+  locationFilter.innerHTML = '<option value="">All locations</option>' + locations.map((loc) => (
+    `<option value="${escapeHtml(loc)}">${escapeHtml(loc)}</option>`
+  )).join('');
+  locationFilter.value = state.locationFilter;
+}
+
 function render() {
+  renderLocationOptions();
   const jobs = sortJobs(visibleJobs(), state.sortBy);
   fetchedNote.textContent = state.fetchedAt ? ` · updated ${relativeDate(state.fetchedAt)}` : '';
 
