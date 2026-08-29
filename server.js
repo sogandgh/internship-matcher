@@ -151,6 +151,17 @@ app.get('/api/resume', async (_req, res) => {
   });
 });
 
+app.delete('/api/resume', async (_req, res) => {
+  try {
+    await fs.rm(RESUME_FILE, { force: true });
+    // Past analyses were written against the removed resume, so drop them too.
+    await writeJson(ANALYSIS_FILE, {});
+    res.json({ resumeLoaded: false });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/api/jobs/:id/status', async (req, res) => {
   const allowed = new Set(['new', 'saved', 'applied', 'dismissed']);
   if (!allowed.has(req.body.status)) return res.status(400).json({ error: 'Invalid status.' });
@@ -162,11 +173,13 @@ app.post('/api/jobs/:id/status', async (req, res) => {
 
 app.post('/api/analyze', async (req, res) => {
   try {
+    // Analysis is meaningless without a resume, so that check comes first.
+    const resume = await readJson(RESUME_FILE, null);
+    if (!resume?.text) return res.status(400).json({ error: 'Upload a resume to analyze this posting.' });
+
     if (!anthropic) {
       return res.status(400).json({ error: 'Set ANTHROPIC_API_KEY in .env to enable Claude resume matching.' });
     }
-    const resume = await readJson(RESUME_FILE, null);
-    if (!resume?.text) return res.status(400).json({ error: 'Upload a resume before running Claude analysis.' });
 
     const jobs = await getJobs(false);
     const requestedIds = Array.isArray(req.body.jobIds) ? req.body.jobIds : [];

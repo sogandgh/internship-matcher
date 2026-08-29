@@ -9,7 +9,9 @@ const state = {
 };
 
 const jobsEl = document.querySelector('#jobs');
-const resumePanel = document.querySelector('#resumePanel');
+const resumeChip = document.querySelector('#resumeChip');
+const resumeName = document.querySelector('#resumeName');
+const removeResumeBtn = document.querySelector('#removeResume');
 const fetchedNote = document.querySelector('#fetchedNote');
 const uploadBtn = document.querySelector('#uploadBtn');
 const template = document.querySelector('#jobTemplate');
@@ -47,6 +49,7 @@ uploadBtn.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => {
   if (fileInput.files[0]) uploadResume();
 });
+removeResumeBtn.addEventListener('click', removeResume);
 
 modalClose.addEventListener('click', closeModal);
 modalOverlay.addEventListener('click', (event) => {
@@ -104,7 +107,6 @@ async function uploadResume() {
   body.append('resume', file);
   uploadBtn.disabled = true;
   uploadBtn.textContent = 'Uploading…';
-  resumePanel.textContent = 'Reading resume…';
   try {
     const response = await fetch('/api/resume', { method: 'POST', body });
     const data = await response.json();
@@ -113,13 +115,31 @@ async function uploadResume() {
     await loadJobs(false);
     toast('Resume uploaded — scores updated.');
   } catch (error) {
-    resumePanel.textContent = error.message;
     toast(error.message, 'error');
   } finally {
     uploadBtn.disabled = false;
     uploadBtn.textContent = 'Upload resume';
     // Clear it so picking the same file again still fires a change event.
     fileInput.value = '';
+  }
+}
+
+async function removeResume() {
+  removeResumeBtn.disabled = true;
+  try {
+    const response = await fetch('/api/resume', { method: 'DELETE' });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || 'Could not remove the resume.');
+    }
+    for (const job of state.jobs) job.aiAnalysis = null;
+    renderResume({ resumeLoaded: false });
+    await loadJobs(false);
+    toast('Resume removed.');
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    removeResumeBtn.disabled = false;
   }
 }
 
@@ -155,6 +175,11 @@ async function analyzeJob(job, triggerButton) {
     openModal(jobModalContent(job));
     return;
   }
+  // No resume, no analysis — fail here rather than round-tripping to the server.
+  if (!state.resumeLoaded) {
+    openModal(errorModalContent(job, 'Upload a resume to analyze this posting.'));
+    return;
+  }
   openModal(loadingModalContent(job));
   try {
     const response = await fetch('/api/analyze', {
@@ -173,7 +198,14 @@ async function analyzeJob(job, triggerButton) {
 }
 
 function renderResume(data) {
-  resumePanel.textContent = `${data.filename} · ${relativeDate(data.uploadedAt)}`;
+  if (!data.resumeLoaded) {
+    resumeChip.hidden = true;
+    resumeName.textContent = '';
+    return;
+  }
+  resumeName.textContent = data.filename;
+  resumeName.title = `${data.filename} · uploaded ${relativeDate(data.uploadedAt)}`;
+  resumeChip.hidden = false;
 }
 
 function visibleJobs() {
@@ -202,7 +234,7 @@ function sortJobs(jobs, sortBy) {
 
 function render() {
   const jobs = sortJobs(visibleJobs(), state.sortBy);
-  fetchedNote.textContent = state.fetchedAt ? `Feed updated ${relativeDate(state.fetchedAt)}` : '';
+  fetchedNote.textContent = state.fetchedAt ? ` · updated ${relativeDate(state.fetchedAt)}` : '';
 
   jobsEl.innerHTML = '';
   if (!jobs.length) {

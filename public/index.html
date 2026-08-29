@@ -19,10 +19,14 @@
         <div class="appbar-top">
           <div class="brand">
             <h1>Internship&nbsp;Matcher</h1>
-            <span class="tagline">Summer 2027</span>
+            <span class="tagline">Summer 2027<span id="fetchedNote"></span></span>
           </div>
 
           <div class="appbar-right">
+            <span class="resume-chip" id="resumeChip" hidden>
+              <span class="resume-name" id="resumeName"></span>
+              <button type="button" class="resume-remove" id="removeResume" aria-label="Remove resume" title="Remove resume">&times;</button>
+            </span>
             <input id="resume" name="resume" type="file" accept=".pdf,.docx,.txt,.md,.markdown" hidden>
             <button type="button" id="uploadBtn" class="btn btn-quiet">Upload resume</button>
             <button id="refresh" class="btn btn-quiet">Refresh</button>
@@ -44,7 +48,6 @@
           </select>
           <button type="button" id="toggleHidden" class="btn btn-quiet" aria-pressed="false">Show hidden</button>
         </div>
-        <p class="statusline"><span id="resumePanel">No resume</span><span id="fetchedNote"></span></p>
       </div>
     </header>
 
